@@ -19,7 +19,7 @@ except ImportError:
     Langbase = None
 
 # Add parent directory to path to import test financial function
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from test_financial_function import TestFinancialDataService
 
 # Load environment variables
@@ -125,17 +125,46 @@ Remember: This is for educational purposes only. Always include appropriate disc
         self.logger.info("Enhanced Agentic Chatbot initialized successfully")
 
     def _setup_logger(self) -> logging.Logger:
-        """Setup enhanced logger"""
+        """Setup enhanced logger with tool usage tracking"""
         logger = logging.getLogger("EnhancedAgenticChatbot")
         if not logger.handlers:
-            handler = logging.StreamHandler()
+            # Create file handler for tool usage logs
+            file_handler = logging.FileHandler('tool_usage.log')
+            file_handler.setLevel(logging.INFO)
+            
+            # Create console handler
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
+            
+            # Create formatter
             formatter = logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s] - %(message)s'
             )
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
+            file_handler.setFormatter(formatter)
+            console_handler.setFormatter(formatter)
+            
+            logger.addHandler(file_handler)
+            logger.addHandler(console_handler)
+        
         logger.setLevel(logging.INFO)
         return logger
+
+    def _log_tool_usage(self, tool_name: str, parameters: Dict[str, Any], result: Dict[str, Any], user_context: str = ""):
+        """Log tool usage with detailed information"""
+        log_entry = {
+            'timestamp': datetime.now().isoformat(),
+            'tool_name': tool_name,
+            'parameters': parameters,
+            'success': result.get('success', False),
+            'user_context': user_context,
+            'result_summary': str(result)[:200] + "..." if len(str(result)) > 200 else str(result)
+        }
+        
+        self.logger.info(f"TOOL USAGE: {json.dumps(log_entry, indent=2)}")
+        
+        # Also log to a dedicated tool usage file
+        with open('discord_tool_usage.log', 'a') as f:
+            f.write(f"{datetime.now().isoformat()} - TOOL: {tool_name} - PARAMS: {parameters} - SUCCESS: {result.get('success', False)} - USER: {user_context}\n")
 
     def _initialize_tools(self):
         """Initialize available tools for the agent"""
@@ -183,6 +212,14 @@ Remember: This is for educational purposes only. Always include appropriate disc
             self.logger.info(f"Analyzing stock: {ticker}")
             result = self.financial_service.analyze_stock(ticker)
             
+            # Log tool usage
+            self._log_tool_usage(
+                tool_name="analyze_stock",
+                parameters={"ticker": ticker},
+                result=result,
+                user_context=f"Stock analysis request for {ticker}"
+            )
+            
             if result['success']:
                 # Add to memory
                 self._add_to_memory(f"Analyzed {ticker}", {
@@ -213,7 +250,14 @@ Remember: This is for educational purposes only. Always include appropriate disc
         try:
             analysis = self.financial_service.analyze_stock(ticker)
             if not analysis['success']:
-                return {'success': False, 'error': 'Could not analyze stock for risk assessment'}
+                result = {'success': False, 'error': 'Could not analyze stock for risk assessment'}
+                self._log_tool_usage(
+                    tool_name="risk_assessment",
+                    parameters={"ticker": ticker},
+                    result=result,
+                    user_context=f"Risk assessment request for {ticker}"
+                )
+                return result
             
             data = analysis['data']
             
@@ -243,7 +287,7 @@ Remember: This is for educational purposes only. Always include appropriate disc
             
             risk_level = "Low" if risk_score <= 1 else "Medium" if risk_score <= 3 else "High"
             
-            return {
+            result = {
                 'success': True,
                 'ticker': ticker,
                 'risk_level': risk_level,
@@ -252,8 +296,25 @@ Remember: This is for educational purposes only. Always include appropriate disc
                 'recommendation': f"Based on analysis, {ticker} has {risk_level.lower()} investment risk."
             }
             
+            # Log tool usage
+            self._log_tool_usage(
+                tool_name="risk_assessment",
+                parameters={"ticker": ticker},
+                result=result,
+                user_context=f"Risk assessment request for {ticker}"
+            )
+            
+            return result
+            
         except Exception as e:
-            return {'success': False, 'error': f"Risk assessment failed: {str(e)}"}
+            result = {'success': False, 'error': f"Risk assessment failed: {str(e)}"}
+            self._log_tool_usage(
+                tool_name="risk_assessment",
+                parameters={"ticker": ticker},
+                result=result,
+                user_context=f"Risk assessment request for {ticker}"
+            )
+            return result
 
     def portfolio_recommendation_function(self, risk_level: str = "medium") -> Dict[str, Any]:
         """Generate portfolio recommendations"""
@@ -531,9 +592,24 @@ Remember: This is for educational purposes only. Always include appropriate disc
             }
 
     async def chat_with_claude(self, user_message: str, execution_results: Optional[Dict] = None) -> str:
-        """Enhanced Claude integration with reasoning context"""
+        """Enhanced Claude integration with reasoning context and conversation history"""
         try:
             messages = []
+            
+            # Add conversation history from memory
+            for memory in self.conversation_memory:
+                if 'user_message' in memory.context:
+                    messages.append({
+                        "role": "user",
+                        "content": memory.context['user_message']
+                    })
+                    if 'assistant_response' in memory.context:
+                        # Remove the "..." from the stored response
+                        full_response = memory.context['assistant_response'].replace("...", "")
+                        messages.append({
+                            "role": "assistant",
+                            "content": full_response
+                        })
             
             # Add relevant memories as context
             if execution_results and execution_results.get('memories'):
@@ -554,7 +630,7 @@ Remember: This is for educational purposes only. Always include appropriate disc
                             "content": f"Tool '{tool_result['tool']}' results: {json.dumps(tool_result['result'], indent=2)}"
                         })
             
-            # Add user message
+            # Add current user message
             messages.append({
                 "role": "user",
                 "content": user_message
@@ -573,7 +649,7 @@ Remember: This is for educational purposes only. Always include appropriate disc
             # Add to memory
             self._add_to_memory(f"User asked: {user_message[:50]}...", {
                 'user_message': user_message,
-                'assistant_response': assistant_response[:100] + "...",
+                'assistant_response': assistant_response,
                 'tools_used': [tr['tool'] for tr in execution_results.get('tool_results', [])] if execution_results else []
             }, importance=0.6)
             
