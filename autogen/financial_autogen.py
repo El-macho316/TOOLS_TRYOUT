@@ -20,17 +20,25 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class LambdaLLMAdapter:
-    """Adapter to use local Lambda function as LLM backend for AutoGen"""
+    """Adapter to use local Lambda function as LLM backend for AutoGen, with mock support"""
     
-    def __init__(self, lambda_function_name: str = None, anthropic_api_key: str = None):
+    def __init__(self, lambda_function_name: str = None, anthropic_api_key: str = None, use_mock_data: Optional[bool] = None):
         """
         Initialize Lambda LLM Adapter for local execution
         
         Args:
             lambda_function_name: Not used for local execution (kept for compatibility)
             anthropic_api_key: Anthropic API key for Claude
+            use_mock_data: If True, return mock responses instead of calling the local lambda
         """
         self.lambda_function_name = lambda_function_name or "local_financial_analysis"
+        
+        # Determine mock mode (env var overrides default)
+        if use_mock_data is None:
+            env_flag = os.getenv("USE_MOCK_DATA", "true").strip().lower()
+            self.use_mock_data = env_flag in {"1", "true", "yes", "y", "on"}
+        else:
+            self.use_mock_data = bool(use_mock_data)
         
         # Initialize Anthropic client for direct Claude access
         self.anthropic_api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
@@ -51,6 +59,12 @@ class LambdaLLMAdapter:
             Analysis results from local Lambda function
         """
         try:
+            # If mock mode is enabled, return mock data
+            if self.use_mock_data:
+                mock = self._generate_mock_response(ticker)
+                logger.info(f"Mock data returned successfully for ticker: {ticker}")
+                return mock
+
             # Create event payload for local lambda function
             event = {
                 "actionGroup": "FinancialAnalysisActionGroup",
@@ -82,6 +96,76 @@ class LambdaLLMAdapter:
         except Exception as e:
             logger.error(f"Error executing local Lambda function: {str(e)}")
             return {"error": str(e)}
+
+    def _generate_mock_response(self, ticker: str) -> Dict[str, Any]:
+        """Generate a mock response matching the lambda response schema."""
+        from datetime import datetime
+        ticker_upper = (ticker or "MOCK").upper()
+        # Simple deterministic mock metrics
+        base_scores = {
+            "peRatio": 18.7,
+            "roe": 16.3,
+            "evToEbitda": 11.9,
+            "eps": 5.4,
+            "marketCap": 250_000_000_000,
+            "sector": "Technology",
+            "industry": "Software",
+        }
+        score = 82.5
+        valuation = "Fairly valued"
+        report_lines = [
+            f"📊 {ticker_upper} ({base_scores['sector']})",
+            f"💰 Market Cap: $250.00B",
+            "",
+            f"🎯 Overall Score: {score:.1f}/100 🔵 Very Good",
+            f"💡 💙 Fairly Valued (Hold/Monitor)",
+            "",
+            "📊 Key Metrics:",
+            f"  P/E Ratio: {base_scores['peRatio']:.1f}x 🔵 Very Good",
+            f"  ROE: {base_scores['roe']:.1f}% 🔵 Very Good",
+            f"  EV/EBITDA: {base_scores['evToEbitda']:.1f}x 🟡 Good",
+            f"  EPS: ${base_scores['eps']:.2f} 🟡 Good",
+            "",
+            "💙 Recommendation: Hold or monitor",
+            "",
+            "⚠️ For informational purposes only. Not investment advice.",
+        ]
+        analysis_report = "\n".join(report_lines)
+        technical_data = {
+            "success": True,
+            "ticker": ticker_upper,
+            "timestamp": datetime.now().isoformat(),
+            "data": {
+                "companyName": ticker_upper,
+                **base_scores,
+                "score": score,
+                "valuation": valuation,
+                "scoreBreakdown": {
+                    "peRatio": 80,
+                    "roe": 80,
+                    "evToEbitda": 70,
+                    "eps": 70,
+                },
+                "metricsAnalyzed": 4,
+                "userFriendlyReport": analysis_report,
+            },
+        }
+        body = json.dumps({
+            "analysisReport": analysis_report,
+            "technicalData": technical_data,
+        })
+        return {
+            "messageVersion": "1.0",
+            "response": {
+                "actionGroup": "FinancialAnalysisActionGroup",
+                "function": "getFinancialAnalysis",
+                "functionResponse": {
+                    "responseBody": {
+                        "TEXT": {"body": body}
+                    }
+                }
+            }
+        }
     
     def get_claude_response(self, messages: List[Dict[str, str]], model: str = "claude-3-5-sonnet-20241022") -> str:
         """
@@ -127,7 +211,7 @@ class LambdaLLMAdapter:
 class FinancialAnalysisAutoGenSystem:
     """AutoGen system for financial analysis using LOCAL Lambda function and Claude"""
     
-    def __init__(self, lambda_function_name: str = None, anthropic_api_key: str = None):
+    def __init__(self, lambda_function_name: str = None, anthropic_api_key: str = None, use_mock_data: Optional[bool] = None):
         """
         Initialize the AutoGen financial analysis system
         
@@ -135,7 +219,7 @@ class FinancialAnalysisAutoGenSystem:
             lambda_function_name: Optional - not used for local execution (kept for compatibility)
             anthropic_api_key: Anthropic API key
         """
-        self.lambda_adapter = LambdaLLMAdapter(lambda_function_name, anthropic_api_key)
+        self.lambda_adapter = LambdaLLMAdapter(lambda_function_name, anthropic_api_key, use_mock_data)
         self.setup_agents()
     
     def setup_agents(self):
@@ -309,11 +393,12 @@ def main():
     # Initialize the system (no AWS Lambda needed - using local function)
     try:
         analysis_system = FinancialAnalysisAutoGenSystem(
-            anthropic_api_key=ANTHROPIC_API_KEY
+            anthropic_api_key=ANTHROPIC_API_KEY,
+            use_mock_data=True
         )
         
         print("🎉 AutoGen Financial Analysis System initialized successfully!")
-        print("🏠 Using LOCAL lambda function for financial data (no AWS needed)")
+        print("🏠 Using MOCK financial data (no AWS needed)")
         print("🤖 Using Anthropic Claude for intelligent analysis")
         print("📊 Connected to Pinecone vector database for stock data")
         
