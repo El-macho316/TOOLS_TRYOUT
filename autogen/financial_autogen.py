@@ -1,16 +1,11 @@
 import os
 import json
-import sys
 import logging
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
 import autogen
 from autogen import ConversableAgent, UserProxyAgent
 from anthropic import Anthropic
-
-# Import local lambda function
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from lambda_function import lambda_handler
 
 # Load environment variables
 load_dotenv()
@@ -20,25 +15,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class LambdaLLMAdapter:
-    """Adapter to use local Lambda function as LLM backend for AutoGen, with mock support"""
+    """Adapter that ALWAYS returns mock data for financial analysis (no Lambda calls)."""
     
     def __init__(self, lambda_function_name: str = None, anthropic_api_key: str = None, use_mock_data: Optional[bool] = None):
         """
-        Initialize Lambda LLM Adapter for local execution
+        Initialize adapter. This build is locked to mock mode for 100% local execution.
         
         Args:
             lambda_function_name: Not used for local execution (kept for compatibility)
             anthropic_api_key: Anthropic API key for Claude
-            use_mock_data: If True, return mock responses instead of calling the local lambda
+            use_mock_data: Ignored; mock mode is always enabled
         """
         self.lambda_function_name = lambda_function_name or "local_financial_analysis"
         
-        # Determine mock mode (env var overrides default)
-        if use_mock_data is None:
-            env_flag = os.getenv("USE_MOCK_DATA", "true").strip().lower()
-            self.use_mock_data = env_flag in {"1", "true", "yes", "y", "on"}
-        else:
-            self.use_mock_data = bool(use_mock_data)
+        # Force mock mode unconditionally
+        self.use_mock_data = True
         
         # Initialize Anthropic client for direct Claude access
         self.anthropic_api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
@@ -50,51 +41,20 @@ class LambdaLLMAdapter:
     
     def invoke_lambda_function(self, ticker: str) -> Dict[str, Any]:
         """
-        Invoke the LOCAL Lambda function for financial analysis
+        Return mock financial analysis data (Lambda disabled in this build)
         
         Args:
             ticker: Stock ticker symbol
             
         Returns:
-            Analysis results from local Lambda function
+            Analysis results from mock generator matching Lambda schema
         """
         try:
-            # If mock mode is enabled, return mock data
-            if self.use_mock_data:
-                mock = self._generate_mock_response(ticker)
-                logger.info(f"Mock data returned successfully for ticker: {ticker}")
-                return mock
-
-            # Create event payload for local lambda function
-            event = {
-                "actionGroup": "FinancialAnalysisActionGroup",
-                "function": "getFinancialAnalysis",
-                "messageVersion": "1.0",
-                "parameters": [
-                    {
-                        "name": "ticker",
-                        "value": ticker
-                    }
-                ]
-            }
-            
-            # Create mock context (Lambda context not needed for local execution)
-            class MockContext:
-                def __init__(self):
-                    self.function_name = "local_financial_analysis"
-                    self.function_version = "1.0"
-                    self.aws_request_id = "local-request-id"
-                    self.remaining_time_in_millis = lambda: 300000
-            
-            context = MockContext()
-            
-            # Call the local lambda handler directly
-            result = lambda_handler(event, context)
-            logger.info(f"Local Lambda function executed successfully for ticker: {ticker}")
-            return result
-            
+            mock = self._generate_mock_response(ticker)
+            logger.info(f"Mock data returned successfully for ticker: {ticker}")
+            return mock
         except Exception as e:
-            logger.error(f"Error executing local Lambda function: {str(e)}")
+            logger.error(f"Error generating mock response: {str(e)}")
             return {"error": str(e)}
 
     def _generate_mock_response(self, ticker: str) -> Dict[str, Any]:
@@ -209,7 +169,7 @@ class LambdaLLMAdapter:
             return f"Error: {str(e)}"
 
 class FinancialAnalysisAutoGenSystem:
-    """AutoGen system for financial analysis using LOCAL Lambda function and Claude"""
+    """AutoGen system for financial analysis using MOCK data and Claude (no Lambda)."""
     
     def __init__(self, lambda_function_name: str = None, anthropic_api_key: str = None, use_mock_data: Optional[bool] = None):
         """
@@ -333,18 +293,18 @@ class FinancialAnalysisAutoGenSystem:
             initial_message: Optional initial message to start the conversation
         """
         if not initial_message:
-            initial_message = """🤖 Welcome to the LOCAL AutoGen Financial Analysis System! 
+            initial_message = """🤖 Welcome to the LOCAL AutoGen Financial Analysis System (MOCK MODE)! 
 
-I can help you analyze stocks using comprehensive fundamental analysis running locally on your machine.
+I can help you analyze stocks using comprehensive fundamental analysis simulated locally.
 Just provide a stock ticker symbol (e.g., AAPL, TSLA, MSFT) and I'll:
-
-1. 🔍 Retrieve detailed financial metrics from Pinecone vector database
-2. 📊 Calculate fundamental analysis scores using local processing  
+ 
+1. 🔍 Retrieve mocked financial metrics (no external calls)
+2. 📊 Calculate fundamental analysis scores using local logic  
 3. 💰 Provide valuation assessment with Claude AI reasoning
 4. 🎯 Give investment recommendations (for informational purposes only)
-
-✨ This system runs 100% locally - no AWS Lambda charges!
-
+ 
+✨ This system runs 100% locally with MOCK data - no AWS, no Pinecone.
+ 
 What stock would you like me to analyze?"""
         
         # Start the group chat
@@ -390,7 +350,7 @@ def main():
         print("You can get one from: https://console.anthropic.com/")
         return
     
-    # Initialize the system (no AWS Lambda needed - using local function)
+    # Initialize the system (mock-only build; no AWS Lambda or external data sources)
     try:
         analysis_system = FinancialAnalysisAutoGenSystem(
             anthropic_api_key=ANTHROPIC_API_KEY,
@@ -398,9 +358,9 @@ def main():
         )
         
         print("🎉 AutoGen Financial Analysis System initialized successfully!")
-        print("🏠 Using MOCK financial data (no AWS needed)")
+        print("🏠 Using 100% MOCK financial data (no AWS or external APIs)")
         print("🤖 Using Anthropic Claude for intelligent analysis")
-        print("📊 Connected to Pinecone vector database for stock data")
+        print("📊 No Pinecone/AWS calls are performed in this build")
         
         # Start the interactive chat
         analysis_system.start_analysis_chat()

@@ -9,11 +9,13 @@ from langchain_anthropic import ChatAnthropic
 from dotenv import load_dotenv
 load_dotenv()
 from langfuse import get_client
+from langfuse.langchain import CallbackHandler
 
 # Initialize Langfuse client using environment variables:
 #   LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
 # If not configured, SDK will be disabled gracefully.
 langfuse = get_client()
+lf_callback = CallbackHandler()
 
 # Configure Anthropic Caapolaude directly
 anthropic_key = os.getenv("ANTHROPIC_API_KEY")
@@ -21,7 +23,8 @@ if anthropic_key:
     llm = ChatAnthropic(
         model="claude-3-haiku-20240307",
         anthropic_api_key=anthropic_key,
-        temperature=0.1
+        temperature=0.1,
+        callbacks=[lf_callback],
     )
     print("✅ Using Anthropic Claude 3 Haiku")
 else:
@@ -267,14 +270,15 @@ Rationale: {result.get('rationale', 'Unknown')}
 @tool("get_stock_comparison")
 def get_stock_comparison(symbol: str, similar_count: int = 5) -> str:
     """
-    Get similar stocks for comparison analysis using mock data.
-    
+    Retrieve raw peer comparison data for a given stock symbol.
+
     Args:
-        symbol: Stock ticker symbol to find comparisons for
-        similar_count: Number of similar stocks to return
-    
+        symbol: Stock ticker to compare against peers.
+        similar_count: Number of similar stocks to include in the output.
+
     Returns:
-        Raw comparison data for LLM to analyze
+        Plain-text data block enumerating similar stocks and key fields for
+        LLM consumption (similarity score, price, score, rank, sector).
     """
     try:
         similar_stocks = financial_service.find_similar_stocks(symbol, similar_count)
